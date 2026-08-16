@@ -1,0 +1,56 @@
+name: Android Toolchain Bundle
+on:
+  push:
+    branches: [chatgpt-android-toolchain]
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" "ndk;25.2.9519653" "cmake;3.22.1"
+      - name: Warm Gradle 8.2 and AGP 8.2.2 caches
+        shell: bash
+        run: |
+          mkdir -p /tmp/agpwarm
+          cd /tmp/agpwarm
+          cat > settings.gradle <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name='agp-warm'
+          EOF
+          cat > build.gradle <<'EOF'
+          plugins { id 'com.android.application' version '8.2.2' apply false }
+          EOF
+          wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip -O /tmp/gradle-8.2-bin.zip
+          unzip -q /tmp/gradle-8.2-bin.zip -d /tmp
+          /tmp/gradle-8.2/bin/gradle --no-daemon help
+          mkdir -p "$HOME/.gradle/wrapper/dists/gradle-8.2-bin/manual"
+          cp /tmp/gradle-8.2-bin.zip "$HOME/.gradle/wrapper/dists/gradle-8.2-bin/manual/gradle-8.2-bin.zip"
+      - name: Assemble portable bundle
+        shell: bash
+        run: |
+          mkdir -p /tmp/android-toolchain/sdk /tmp/android-toolchain/gradle
+          for d in platforms/android-34 build-tools/34.0.0 platform-tools ndk/25.2.9519653 cmake/3.22.1 licenses; do
+            mkdir -p "/tmp/android-toolchain/sdk/$(dirname "$d")"
+            cp -a "$ANDROID_HOME/$d" "/tmp/android-toolchain/sdk/$d"
+          done
+          cp -a "$HOME/.gradle/caches" /tmp/android-toolchain/gradle/
+          cp -a "$HOME/.gradle/wrapper" /tmp/android-toolchain/gradle/
+          tar -I 'zstd -3 -T0' -cf /tmp/android-toolchain.tar.zst -C /tmp android-toolchain
+          ls -lh /tmp/android-toolchain.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-toolchain
+          path: /tmp/android-toolchain.tar.zst
+          compression-level: 0
+          retention-days: 1
