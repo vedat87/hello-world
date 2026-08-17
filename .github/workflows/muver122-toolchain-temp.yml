@@ -1,4 +1,4 @@
-name: MuVer122 temporary Android toolchains
+name: MuVer122 temporary Android platform
 
 on:
   push:
@@ -6,33 +6,22 @@ on:
       - muver122-toolchain-temp
 
 jobs:
-  fetch_tools:
+  fetch_platform:
     runs-on: ubuntu-latest
     steps:
-      - name: Download Android SDK archive
+      - name: Prepare SDK and install Android 34 platform
         shell: bash
         run: |
           set -euxo pipefail
-          curl -fL --retry 3 --retry-delay 2 -o android-sdk.tar.xz https://github.com/HomuHomu833/android-sdk-custom/releases/download/37.0.0/android-sdk-x86_64-linux-gnu.tar.xz
-          sha256sum android-sdk.tar.xz
-      - name: Upload Android SDK archive
+          curl -fL --retry 3 --retry-delay 2 -o sdk.tar.xz https://github.com/HomuHomu833/android-sdk-custom/releases/download/37.0.0/android-sdk-x86_64-linux-gnu.tar.xz
+          tar -xf sdk.tar.xz
+          yes | ./android-sdk/cmdline-tools/bin/sdkmanager --sdk_root="$PWD/android-sdk" "platforms;android-34" >/dev/null
+          tar -C android-sdk -cJf android-platform-34.tar.xz platforms/android-34
+          ls -lh android-platform-34.tar.xz
+      - name: Upload platform
         uses: actions/upload-artifact@v4
         with:
-          name: muver122-sdk-x86_64
-          path: android-sdk.tar.xz
-          compression-level: 0
-          retention-days: 1
-
-      - name: Download Gradle 8.2
-        shell: bash
-        run: |
-          set -euxo pipefail
-          curl -fL --retry 3 --retry-delay 2 -o gradle-8.2-bin.zip https://services.gradle.org/distributions/gradle-8.2-bin.zip
-          sha256sum gradle-8.2-bin.zip
-      - name: Upload Gradle archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: muver122-gradle-8.2
-          path: gradle-8.2-bin.zip
+          name: muver122-android-platform-34
+          path: android-platform-34.tar.xz
           compression-level: 0
           retention-days: 1
