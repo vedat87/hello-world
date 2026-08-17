@@ -1,4 +1,4 @@
-name: MuVer122 temporary NDK fetch
+name: MuVer122 temporary Android toolchains
 
 on:
   push:
@@ -6,15 +6,33 @@ on:
       - muver122-toolchain-temp
 
 jobs:
-  fetch_ndk:
+  fetch_tools:
     runs-on: ubuntu-latest
     steps:
-      - name: Download NDK
-        run: curl -fL --retry 3 -o ndk.tar.xz https://github.com/HomuHomu833/android-ndk-custom/releases/download/r28/android-ndk-r28c-x86_64-linux-gnu.tar.xz
-      - name: Upload NDK
+      - name: Download Android SDK archive
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 --retry-delay 2 -o android-sdk.tar.xz https://github.com/HomuHomu833/android-sdk-custom/releases/download/37.0.0/android-sdk-x86_64-linux-gnu.tar.xz
+          sha256sum android-sdk.tar.xz
+      - name: Upload Android SDK archive
         uses: actions/upload-artifact@v4
         with:
-          name: muver122-ndk-x86_64
-          path: ndk.tar.xz
+          name: muver122-sdk-x86_64
+          path: android-sdk.tar.xz
+          compression-level: 0
+          retention-days: 1
+
+      - name: Download Gradle 8.2
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 --retry-delay 2 -o gradle-8.2-bin.zip https://services.gradle.org/distributions/gradle-8.2-bin.zip
+          sha256sum gradle-8.2-bin.zip
+      - name: Upload Gradle archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: muver122-gradle-8.2
+          path: gradle-8.2-bin.zip
           compression-level: 0
           retention-days: 1
