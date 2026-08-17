@@ -1,0 +1,20 @@
+name: MuVer122 temporary NDK fetch
+
+on:
+  push:
+    branches:
+      - muver122-toolchain-temp
+
+jobs:
+  fetch_ndk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download NDK
+        run: curl -fL --retry 3 -o ndk.tar.xz https://github.com/HomuHomu833/android-ndk-custom/releases/download/r28/android-ndk-r28c-x86_64-linux-gnu.tar.xz
+      - name: Upload NDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: muver122-ndk-x86_64
+          path: ndk.tar.xz
+          compression-level: 0
+          retention-days: 1
