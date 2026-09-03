@@ -21,7 +21,7 @@ jobs:
           echo VSINSTALL=%VSINSTALL%
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
           cd mu-crowdfps
-          cl /nologo /LD /O2 /GL /MT /EHsc /std:c++17 /DWIN32 /D_WINDOWS MuCrowdFPS.cpp /link /LTCG /OPT:REF /OPT:ICF /OUT:MuDX11.dll opengl32.lib
+          cl /nologo /LD /O2 /GL /MT /EHsc /std:c++17 /DWIN32 /D_WINDOWS MuCrowdFPS.cpp /link /LTCG /OPT:REF /OPT:ICF /OUT:MuDX11.dll opengl32.lib gdi32.lib
 
       - name: Forge v0.9 plugin CRC compatibility
         shell: pwsh
@@ -35,24 +35,28 @@ jobs:
         run: |
           cd mu-crowdfps
           @'
-          MU CrowdFPS v2 - ADAPTIVE / ORIGINAL MAIN KORUNUR
+          MU CrowdFPS v3 - DEFERRED MESH BATCHER / ORIGINAL MAIN KORUNUR
 
           Main.exe DEGISTIRILMEZ.
-          v1'deki tum glBegin bloklarini array'e cevirme kapatildi.
-          Sadece GL_TRIANGLES ve ayni cagri noktasi onceki karelerde 96+ vertex urettiyse batch edilir.
-          Kucuk QUAD/sprite/effect bloklari orijinal OpenGL yolundan aynen gecer.
+
+          v2 log sonucu: her glBegin ortalama ~4 vertex uretiyor ve v2 hic batch yapamiyordu.
+          v3 tek tek Begin/End bloklarini ayri draw yapmak yerine state/matrix/texture degisene kadar biriktirir.
+          GL_TRIANGLES/GL_QUADS/GL_LINES/GL_POINTS bloklari guvenli sinirlarda birlestirilir.
+          Texture, matrix, blend, alpha, depth, fog, client-array state degisikliklerinde batch once flush edilir.
+          SwapBuffers oncesinde kalan batch mutlaka cizilir.
 
           Kurulum:
-          1. v1 MuDX11.dll dosyasini kaldirin/yedekleyin.
+          1. Eski MuDX11.dll dosyasini yedekleyin.
           2. Bu paketteki MuDX11.dll + MuCrowdFPS.ini dosyalarini client kokune koyun.
-          3. Ayni Aida kalabalik sahnede test edin.
-          4. MuCrowdFPS.log dosyasini gonderin.
+          3. Main.exe ve main.premium dosyalarini DEGISTIRMEYIN.
+          4. Ayni Aida/Blue Golem kalabalik sahnede test edin.
+          5. MuCrowdFPS.log dosyasini gonderin.
           '@ | Set-Content -Encoding ASCII TEST-TALIMATI.txt
-          Compress-Archive -Path MuDX11.dll,MuCrowdFPS.ini,BUILD-INFO.txt,TEST-TALIMATI.txt -DestinationPath MuCrowdFPS_v2_Adaptive_OriginalMain.zip -Force
+          Compress-Archive -Path MuDX11.dll,MuCrowdFPS.ini,BUILD-INFO.txt,TEST-TALIMATI.txt -DestinationPath MuCrowdFPS_v3_DeferredBatch_OriginalMain.zip -Force
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: MuCrowdFPS-v2-Adaptive-OriginalMain
-          path: mu-crowdfps/MuCrowdFPS_v2_Adaptive_OriginalMain.zip
+          name: MuCrowdFPS-v3-DeferredBatch-OriginalMain
+          path: mu-crowdfps/MuCrowdFPS_v3_DeferredBatch_OriginalMain.zip
           retention-days: 30
