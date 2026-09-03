@@ -1,0 +1,45 @@
+name: Build GPU Legacy x86
+
+on:
+  push:
+    branches:
+      - mu-gpu-engine-phase1
+    paths:
+      - "mu-gpu-engine-phase1/legacy/**"
+      - ".github/workflows/build-gpu-legacy-x86.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare package files
+        shell: cmd
+        run: |
+          if not exist out mkdir out
+          copy /Y mu-gpu-engine-phase1\legacy\* out\
+
+      - name: Compile GPU core Win32 x86
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cd out
+          cl /nologo /c /O2 /MT /EHsc /std:c++17 /DWIN32 /D_WINDOWS GpuSkinningLegacy.cpp
+          lib /nologo /OUT:GpuSkinningLegacy_x86.lib GpuSkinningLegacy.obj
+          dumpbin /headers GpuSkinningLegacy.obj > BUILD-VERIFY.txt
+          echo Visual Studio 2026 Win32/x86 GPU core compile SUCCESS>> BUILD-VERIFY.txt
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path out/* -DestinationPath Main_GPU_Engine_Phase1_Legacy_x86.zip -Force
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Main-GPU-Engine-Phase1-Legacy-x86
+          path: Main_GPU_Engine_Phase1_Legacy_x86.zip
+          retention-days: 30
