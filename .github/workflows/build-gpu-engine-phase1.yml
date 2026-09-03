@@ -14,78 +14,114 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch upstream GPU skinning implementation
+      - name: Prepare legacy Source Main 5.2 GPU files
         shell: pwsh
         run: |
-          git clone --filter=blob:none https://github.com/sven-n/MuMain.git upstream
-          cd upstream
-          git fetch origin 0702144c8446cef41e4b28b95576376aae93f2e4 896afef6d572c6069ef628ba45fa2270729d500e f400d90e9fad93733e11a0870fa1722519564352 983d59ed872aa186a199ad6bc54180c318bc7526
-          New-Item -ItemType Directory -Force ../out | Out-Null
-          git format-patch -1 0702144c8446cef41e4b28b95576376aae93f2e4 --stdout | Set-Content -Encoding UTF8 ../out/0001-GPU-bone-skinning-core.patch
-          git format-patch -1 896afef6d572c6069ef628ba45fa2270729d500e --stdout | Set-Content -Encoding UTF8 ../out/0002-BMD-UBO-driver-call-reduction.patch
-          git format-patch -1 f400d90e9fad93733e11a0870fa1722519564352 --stdout | Set-Content -Encoding UTF8 ../out/0003-Bone-palette-3x4-affine.patch
-          git format-patch -1 983d59ed872aa186a199ad6bc54180c318bc7526 --stdout | Set-Content -Encoding UTF8 ../out/0004-BMD-VAO-dynamic-VBO.patch
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item mu-gpu-engine-phase1/legacy/* out/
 
-      - name: Add migration notes
+          # Bone palette must be uploaded once per transformed body, not once per mesh.
+          # Normalize line endings so the source rewrite is deterministic.
+          $path = "out/GpuSkinningLegacy.cpp"
+          $cpp = (Get-Content $path -Raw) -replace "`r`n", "`n"
+          $cpp = $cpp.Replace("    GLuint gBoneTexture = 0;`n", "    GLuint gBoneTexture = 0;`n    std::uint32_t gLastPaletteSerial = 0;`n")
+
+          $needle = @'
+        // Upload one compact 3x4 affine palette. 200 bones = 9.6 KB max.
+        glActiveTexture_(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, gBoneTexture);
+        const int rows = s.boneCount > 200 ? 200 : s.boneCount;
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 3, rows, GL_RGBA, GL_FLOAT, s.boneRows);
+        if (glGetError() != GL_NO_ERROR)
+        {
+            glActiveTexture_(GL_TEXTURE0);
+            gError = "Bone palette upload failed";
+            return false;
+        }
+'@
+          $replacement = @'
+        // One 9.6 KB palette upload per transformed body. All meshes of the same
+        // BMD draw reuse it until BMDGpuBridge increments paletteSerial.
+        if (gLastPaletteSerial != s.paletteSerial)
+        {
+            glActiveTexture_(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, gBoneTexture);
+            const int rows = s.boneCount > 200 ? 200 : s.boneCount;
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 3, rows, GL_RGBA, GL_FLOAT, s.boneRows);
+            if (glGetError() != GL_NO_ERROR)
+            {
+                glActiveTexture_(GL_TEXTURE0);
+                gError = "Bone palette upload failed";
+                return false;
+            }
+            gLastPaletteSerial = s.paletteSerial;
+        }
+'@
+          if (-not $cpp.Contains($needle)) { throw "Bone palette upload block not found" }
+          $cpp = $cpp.Replace($needle, $replacement)
+          [IO.File]::WriteAllText((Resolve-Path $path), $cpp, [Text.UTF8Encoding]::new($false))
+
+          @'
+          Main GPU Engine Phase1 - LEGACY OPENGL / SOURCE MAIN 5.2
+          ========================================================
+
+          Bu paket eski MuCrowdFPS glBegin/glEnd hook sistemi DEGILDIR.
+          Main'in kendi OpenGL compatibility context'i korunur.
+
+          GPU'ya tasinan is:
+          - Rest-pose BMD position/normal + bone index static VBO
+          - 3x200 RGBA32F bone palette texture
+          - Vertex shader skeletal position skinning
+          - Shader tarafinda normal transform + legacy lighting/chrome UV formulleri
+
+          Phase1 guvenlik:
+          - Shadowmap/wave/color/bright ve cloth/physics CPU fallback
+          - Shader/vertex-texture destegi yoksa otomatik CPU fallback
+          - ZzzBMD class layout'ini degistirmez; bridge state disarida tutulur
+          - Main protocol/custom packet koduna dokunmaz
+
+          Test sirasi:
+          1. Once temiz v0.9/Phase2 orijinal goruntu tabanina donun.
+          2. Kaynaga bu paketteki 4 dosyayi ekleyin ve INTEGRATION dosyasindaki noktalari uygulayin.
+          3. VS2026 Win32 Release derleyin.
+          4. Ayni Aida Blue Golem kalabalik sahnede FPS olcun.
+          5. GPU yolu calisiyorsa CPU vertex Transform dongusu normal oyunda atlanir.
+          '@ | Set-Content -Encoding UTF8 out/README-FIRST.txt
+
+      - name: Compile GPU core with Visual Studio 2026 x86
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cd out
+          cl /nologo /c /O2 /GL /MT /EHsc /std:c++17 /DWIN32 /D_WINDOWS GpuSkinningLegacy.cpp
+          lib /nologo /LTCG /OUT:GpuSkinningLegacy_x86.lib GpuSkinningLegacy.obj
+          dumpbin /headers GpuSkinningLegacy.obj | findstr /i "machine" > BUILD-VERIFY.txt
+          echo Visual Studio 2026 x86 compile: SUCCESS>> BUILD-VERIFY.txt
+
+      - name: Include upstream measured GPU reference
         shell: pwsh
         run: |
           @'
-          MU ONLINE - GPU ENGINE PHASE 1 PORTING KIT
-          ==========================================
-
-          Hedef:
-          - Main 5.2 / Louis tabaninda CPU vertex skinning yerine GPU skeletal skinning.
-          - Orijinal goruntu, texture/blend/chrome/fog davranisini korumak.
-          - Kalabalik character/monster sahnelerinde CPU tarafindaki BMD::Transform vertex dongusunu kaldirmak.
-
-          Referans GPU skinning commit'i:
+          UPSTREAM REFERENCE
+          ==================
+          Same Season 5.2/Louis lineage reference commit:
           0702144c8446cef41e4b28b95576376aae93f2e4
 
-          Referans uygulamanin olculmus sonucu:
-          BMD::Transform self-time ~0.25 ms -> ~0.01-0.02 ms (15-20x CPU-side skinning reduction).
-
-          Bu KIT dogrudan kullanicinin Main.exe dosyasini DEGISTIRMEZ.
-          Bu patch'ler ayni Season 5.2/Louis kaynak soyundan gelen upstream referans degisiklikleridir.
-          Kullaniciya ait Source Main 5.2 kaynaklariyla satir/simge eslestirmesi yapilarak port edilmelidir.
-
-          Mimari:
-          1) CPU animasyon palette/bone matrix hesaplar.
-          2) Rest-pose vertex + bone index VBO'da statik tutulur.
-          3) Bone palette UBO ile GPU'ya yuklenir.
-          4) Vertex shader position/normal skinning yapar.
-          5) Cloth/physics gibi CPU vertex isteyen yollar CPU fallback kullanir.
-
-          Patch sirasi:
-          0001 GPU skinning + shader/RHI core
-          0002 BMD shader parametrelerini UBO'ya toplama
-          0003 bone palette'i 3x4 affine row olarak yukleme
-          0004 dinamik VBO attribute formatini VAO icine cache'leme
-
-          Dikkat:
-          - 0001 buyuk renderer migration'idir ve cok sayida dosyaya dokunur.
-          - Main.exe binary byte patch ile GPU skinning elde edilemez; BMD kaynak akisinin shader pipeline'a tasinmasi gerekir.
-          - Cloth/shadow/vertex-wave gibi CPU vertex tuketen yollar icin fallback korunmalidir.
-          - Kullanici Main'i custom Louis/V43 oldugu icin patch otomatik uygulanmadan once ZzzBMD.cpp/.h ve proje dosyasi ile eslestirilmelidir.
-          '@ | Set-Content -Encoding UTF8 out/PORTING-NOTES.txt
-
-          @'
-          GPU_PHASE1=1
-          GPU_SKINNING=1
-          CPU_VERTEX_SKINNING_FALLBACK=1
-          BONE_PALETTE_3X4=1
-          BMD_VBO_VAO_CACHE=1
-          TARGET_WIN32_X86=1
-          TARGET_VS2026=1
-          '@ | Set-Content -Encoding ASCII out/GPU-ENGINE-PHASE1.ini
+          Reference implementation moved BMD::Transform per-vertex skinning to the GPU.
+          Reported Transform self-time at a crowded spot: ~0.25 ms -> ~0.01-0.02 ms.
+          This package is a smaller legacy-compatibility backport approach; it does not copy the
+          upstream renderer wholesale and therefore does not claim the same final FPS before testing.
+          '@ | Set-Content -Encoding UTF8 out/UPSTREAM-REFERENCE.txt
 
       - name: Create package
         shell: pwsh
         run: |
-          Compress-Archive -Path out/* -DestinationPath Main_GPU_Engine_Phase1_PortKit.zip -Force
+          Compress-Archive -Path out/* -DestinationPath Main_GPU_Engine_Phase1_Legacy_x86.zip -Force
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: Main-GPU-Engine-Phase1-PortKit
-          path: Main_GPU_Engine_Phase1_PortKit.zip
+          name: Main-GPU-Engine-Phase1-Legacy-x86
+          path: Main_GPU_Engine_Phase1_Legacy_x86.zip
           retention-days: 30
