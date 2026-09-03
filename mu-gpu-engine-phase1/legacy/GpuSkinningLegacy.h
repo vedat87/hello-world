@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace MuGpuSkin
 {
@@ -17,6 +18,7 @@ namespace MuGpuSkin
     {
         const float* boneRows;      // contiguous [bone][3][4]
         int boneCount;
+        std::uint32_t paletteSerial; // increment once for each BMD::Transform call
         float bodyOrigin[3];
         float bodyScale;
         float boneScale;
