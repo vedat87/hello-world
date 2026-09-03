@@ -16,7 +16,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Generate indexed GPU source
-        run: python mu-gpu-engine-phase1/phase3/build_phase3.py
+        run: |
+          python mu-gpu-engine-phase1/phase3/build_phase3.py
+          python mu-gpu-engine-phase1/phase3/fix_phase3_shutdown.py
 
       - name: Compile Phase3 GPU core Win32 x86 VS2026
         shell: cmd
