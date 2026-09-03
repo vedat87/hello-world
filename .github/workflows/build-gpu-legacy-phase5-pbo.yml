@@ -1,0 +1,55 @@
+name: Build GPU Legacy Phase5 PBO x86
+
+on:
+  push:
+    branches: [ "mu-gpu-engine-phase1" ]
+    paths:
+      - ".github/workflows/build-gpu-legacy-phase5-pbo.yml"
+      - "mu-gpu-engine-phase1/phase5/**"
+      - "mu-gpu-engine-phase1/phase5-trigger.txt"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Phase3 indexed base
+        shell: pwsh
+        run: |
+          python mu-gpu-engine-phase1/phase3/build_phase3.py
+          python mu-gpu-engine-phase1/phase3/fix_phase3_shutdown.py
+
+      - name: Apply Phase4 bone atlas
+        shell: pwsh
+        run: |
+          python mu-gpu-engine-phase1/phase4/build_phase4.py
+
+      - name: Apply Phase5 PBO stream
+        shell: pwsh
+        run: |
+          python mu-gpu-engine-phase1/phase5/build_phase5.py
+
+      - name: Compile Phase5 GPU core Win32 x86 VS2026
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cd out
+          cl /nologo /c /O2 /GL /Gy /Gw /MT /EHsc /std:c++17 /DNDEBUG /DWIN32 /D_WINDOWS GpuSkinningLegacy.cpp
+          lib /nologo /LTCG /OUT:GpuSkinningLegacy_Phase5_PBO_x86.lib GpuSkinningLegacy.obj
+          dumpbin /headers GpuSkinningLegacy.obj > BUILD-VERIFY-PHASE5.txt
+          echo Visual Studio 2026 Win32/x86 Phase5 PBO GPU core compile SUCCESS>> BUILD-VERIFY-PHASE5.txt
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path out/* -DestinationPath Main_GPU_Engine_Phase5_PBO_x86.zip -Force
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Main-GPU-Engine-Phase5-PBO-x86
+          path: Main_GPU_Engine_Phase5_PBO_x86.zip
+          retention-days: 30
