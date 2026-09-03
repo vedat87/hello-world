@@ -1,0 +1,70 @@
+name: Build MuGpuEngine DLL x86
+
+on:
+  push:
+    branches: [ "mu-gpu-engine-phase1" ]
+    paths:
+      - ".github/workflows/build-mugpuengine-dll-x86.yml"
+      - "mu-gpu-engine-phase1/legacy/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Win32 x86 DLL
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cd mu-gpu-engine-phase1\legacy
+          cl /nologo /LD /O2 /MT /EHsc /std:c++17 /DWIN32 /D_WINDOWS /DMUGPUENGINE_EXPORTS GpuSkinningLegacy.cpp MuGpuEngineExports.cpp opengl32.lib user32.lib gdi32.lib /link /OUT:MuGpuEngine_x86.dll /IMPLIB:MuGpuEngine_x86.lib
+          dumpbin /headers MuGpuEngine_x86.dll > BUILD-DLL-VERIFY.txt
+          dumpbin /exports MuGpuEngine_x86.dll >> BUILD-DLL-VERIFY.txt
+          echo Visual Studio 2026 Win32/x86 MuGpuEngine DLL compile SUCCESS>> BUILD-DLL-VERIFY.txt
+
+      - name: Add integration notes
+        shell: pwsh
+        run: |
+          @'
+          MU GPU ENGINE PHASE 1 - WIN32/X86 DLL
+          =====================================
+          Bu DLL tek basina Main.exe'ye enjekte edilmez. Source Main 5.2 icindeki BMD render yolundan cagrilir.
+
+          Hedef akis:
+          BMD rest-pose vertex + position/normal bone index -> MuGpu_UploadMesh (bir kez)
+          Her draw -> bone palette [bone][3][4] -> MuGpu_DrawMesh
+          Vertex position/normal transform -> GLSL vertex shader / GPU
+          Cloth, collision, shadow veya CPU vertex gerektiren ozel yollar -> mevcut CPU fallback
+
+          RageZone/Elion referansindan alinan tasarim ilkeleri:
+          - API degistirmek tek basina FPS cozum degil; veri akisi ve cache-friendly motor onemli.
+          - Kalabalik sahne hedefi yuzlerce player + binlerce effect altinda sabit frametime.
+          - Mesh verisini her frame yeniden olusturmak yerine kalici GPU cache kullan.
+          - CPU'da vertex skinning yapma; yalniz bone palette guncelle.
+
+          Son Main entegrasyonunda mevcut Main.exe custom ozellikleri/protokolu korunacak.
+          '@ | Set-Content -Encoding UTF8 mu-gpu-engine-phase1\legacy\DLL-INTEGRATION-TR.txt
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Copy-Item mu-gpu-engine-phase1\legacy\MuGpuEngine_x86.dll package\
+          Copy-Item mu-gpu-engine-phase1\legacy\MuGpuEngine_x86.lib package\
+          Copy-Item mu-gpu-engine-phase1\legacy\MuGpuEngineExports.h package\
+          Copy-Item mu-gpu-engine-phase1\legacy\GpuSkinningLegacy.h package\
+          Copy-Item mu-gpu-engine-phase1\legacy\BMDGpuBridge.cpp package\
+          Copy-Item mu-gpu-engine-phase1\legacy\BMDGpuBridge.h package\
+          Copy-Item mu-gpu-engine-phase1\legacy\INTEGRATION-SourceMain52-TR.txt package\
+          Copy-Item mu-gpu-engine-phase1\legacy\DLL-INTEGRATION-TR.txt package\
+          Copy-Item mu-gpu-engine-phase1\legacy\BUILD-DLL-VERIFY.txt package\
+          Compress-Archive -Path package\* -DestinationPath Main_GPU_Engine_Phase1_DLL_x86.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Main-GPU-Engine-Phase1-DLL-x86
+          path: Main_GPU_Engine_Phase1_DLL_x86.zip
+          retention-days: 30
