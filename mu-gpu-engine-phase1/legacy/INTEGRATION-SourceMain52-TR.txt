@@ -1,0 +1,179 @@
+MU ONLINE SOURCE MAIN 5.2 - GPU SKINNING PHASE 1
+================================================
+
+AMAÇ
+----
+Main.exe'nin protokol/custom sistemlerini degistirmeden, BMD vertex skinning
+hesabini CPU dongusundan GPU vertex shader'a tasimak.
+
+Bu paket DirectX wrapper DEGILDIR. Mevcut OpenGL compatibility context korunur.
+Texture/blend/depth/alpha test ayarlari Main'in kendi kodundan devam eder.
+
+EKLENECEK DOSYALAR
+------------------
+source\GpuSkinningLegacy.h
+source\GpuSkinningLegacy.cpp
+source\BMDGpuBridge.h
+source\BMDGpuBridge.cpp
+
+Main.vcxproj icine iki .cpp ve iki .h dosyasini ekleyin. Win32/x86 Release hedefinde
+opengl32.lib zaten Main tarafinda baglidir; degilse Linker/Input'a eklenmelidir.
+
+1) ZzzBMD.cpp INCLUDE
+---------------------
+ZzzBMD.h include'undan sonra:
+
+#include "GpuSkinningLegacy.h"
+#include "BMDGpuBridge.h"
+
+2) BMD::Transform - CPU VERTEX LOOP'UNU GPU ICIN ATLA
+-----------------------------------------------------
+BMD::Transform icinde LightPosition hesaplandiktan sonra, BoundingMin/BoundingMax
+ve mesh vertex dongusundan ONCE ekleyin:
+
+#ifndef _DEBUG
+    if (EditFlag != 2)
+    {
+        if (BMDGpuBridge::BeginTransform(this, BoneMatrix,
+                                         BoundingBoxMin, BoundingBoxMax, OBB,
+                                         Translate, _Scale, BoneScale,
+                                         LightEnable ? LightPosition : nullptr))
+        {
+            return;
+        }
+    }
+#endif
+
+Bu nokta kritik: GPU kullanilabiliyorsa VertexTransform/NormalTransform tum model
+icin pesinen doldurulmaz. CPU vertex verisine ihtiyac olan eski yollar lazy fallback
+ile sadece ihtiyac oldugunda hesaplar.
+
+3) BMD::RenderMesh - NORMAL FALLBACK'I GARANTI ET
+-------------------------------------------------
+RenderMesh'te NormalTransform veya IntensityTransform ilk okunmadan hemen once:
+
+    if (BMDGpuBridge::IsActive(this))
+        BMDGpuBridge::EnsureCpuNormals(this, meshIndex);
+
+Phase 1'de normal/lighting hesabi guvenli parity icin CPU fallback olarak kalir.
+Position vertex skinning ise GPU'dadir. Phase 2'de lighting/chrome normal hesabi da
+shader'a tamamen alinabilir.
+
+4) BMD::RenderMesh - GPU DRAW
+-----------------------------
+Render state ve texture secimi bittikten sonra, su satirdan ONCE:
+
+    bool enableColor = ...
+    glEnableClientState(GL_VERTEX_ARRAY);
+
+su blogu ekleyin:
+
+    const bool gpuPlainMesh =
+        meshIndex != StreamMesh &&
+        !(blendMeshIndex <= -2 || m->Texture == blendMeshIndex);
+
+    if (gpuPlainMesh && BMDGpuBridge::IsActive(this))
+    {
+        const float gpuU = EnableWave ? blendMeshTextureCoordU : 0.0f;
+        const float gpuV = EnableWave ? blendMeshTextureCoordV : 0.0f;
+        if (BMDGpuBridge::TryDraw(this, meshIndex, renderFlags, finalRenderFlags,
+                                 alpha, gpuU, gpuV, enableLight))
+        {
+            return;
+        }
+    }
+
+    if (BMDGpuBridge::IsActive(this))
+        BMDGpuBridge::EnsureCpuVertices(this, meshIndex);
+
+Son iki satir GPU shader herhangi bir state/driver sebebiyle reddederse eski
+VertexTransform yolunun goruntuyu aynen korumasini saglar.
+
+5) RenderMeshAlternative
+------------------------
+Fonksiyon basinda Mesh_t* m alindiktan sonra:
+
+    if (BMDGpuBridge::IsActive(this))
+    {
+        BMDGpuBridge::EnsureCpuVertices(this, i);
+        BMDGpuBridge::EnsureCpuNormals(this, i);
+    }
+
+Alternative yol Phase 1'de CPU fallback kalir.
+
+6) BeginRenderCoinHeap / AddToCoinHeap
+--------------------------------------
+AddToCoinHeap basinda:
+
+    if (BMDGpuBridge::IsActive(this))
+        BMDGpuBridge::EnsureCpuVertices(this, 0);
+
+7) RenderMeshEffect / Collision / Shadow CPU CONSUMER'LARI
+----------------------------------------------------------
+VertexTransform kullanan fonksiyonlarda okumadan once ilgili mesh icin:
+
+    BMDGpuBridge::EnsureCpuVertices(this, meshIndex);
+
+NormalTransform kullanan fonksiyonlarda:
+
+    BMDGpuBridge::EnsureCpuNormals(this, meshIndex);
+
+Ozellikle AddMeshShadowTriangles / CollisionDetectLineToMesh / RenderMeshEffect
+kontrol edilmelidir. Shadow/wave/cloth Phase 1'de GPU draw'a zorlanmaz.
+
+8) PhysicsManager.cpp - CLOTH
+-----------------------------
+PhysicsManager VertexTransform[m_iMesh] okumadan once elindeki BMD pointer'i ile:
+
+    b->EnsureCpuVertices(...)
+
+diye bir BMD member'i eklemek yerine bu pakette ABI degismemesi icin:
+
+    BMDGpuBridge::EnsureCpuVertices(b, m_iMesh);
+
+kullanin ve BMDGpuBridge.h include edin.
+
+9) BMD::Release
+---------------
+Mesh bellekleri delete/free edilmeden ONCE:
+
+    BMDGpuBridge::ReleaseBMD(this);
+
+10) PROGRAM KAPANISI
+--------------------
+OpenGL context silinmeden once bir kez:
+
+    BMDGpuBridge::Shutdown();
+
+cagrilabilir. Cagrilmazsa Windows proses kapanisinda kaynaklar zaten serbest kalir,
+ama temiz shutdown icin tavsiye edilir.
+
+GPU UYUMLULUK
+-------------
+- Mevcut wgl context korunur.
+- GLSL 1.20 shader kullanilir.
+- VBO kullanilir.
+- Bone palette 3 x 200 RGBA32F texture olarak vertex shader'a verilir.
+- GPU'da vertex texture fetch gerektirir. Destek yoksa IsAvailable=false olur ve
+  Main otomatik olarak orijinal CPU path'te devam eder.
+
+PHASE 1 DESTEKLENEN GPU DRAW
+----------------------------
+- RENDER_TEXTURE
+- CHROME/CHROME2/3/4/5/6/7
+- OIL/METAL temel texture-coordinate shader yolu
+
+CPU FALLBACK
+------------
+- SHADOWMAP
+- RENDER_WAVE vertex deformation
+- RENDER_COLOR / BRIGHT özel pass'leri
+- cloth/physics
+- collision ve CPU vertex isteyen custom kod
+
+NEDEN BU YOL
+------------
+Onceki MuCrowdFPS hook testinde draw call sayisi cok ciddi azalmasina ragmen FPS
+30'un altina indi. Bu nedenle OpenGL API hook/batching katmani tamamen terk edildi.
+Bu motor dogrudan rest-pose vertex + bone index'i GPU'ya verir; CPU'da her frame
+her vertex icin VectorTransform yapilmaz.
