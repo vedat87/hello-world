@@ -35,32 +35,24 @@ jobs:
         run: |
           cd mu-crowdfps
           @'
-          MU CrowdFPS v1 - ORIGINAL MAIN KORUNUR
+          MU CrowdFPS v2 - ADAPTIVE / ORIGINAL MAIN KORUNUR
 
-          Bu paket Main.exe dosyasini DEGISTIRMEZ.
-          v0.9 client icindeki MuDX11.dll dosyasini bu paketteki MuDX11.dll ile degistirin.
-          main.premium ayni kalabilir: DLL CRC32 DBD0E22E olacak sekilde uretilmistir.
+          Main.exe DEGISTIRILMEZ.
+          v1'deki tum glBegin bloklarini array'e cevirme kapatildi.
+          Sadece GL_TRIANGLES ve ayni cagri noktasi onceki karelerde 96+ vertex urettiyse batch edilir.
+          Kucuk QUAD/sprite/effect bloklari orijinal OpenGL yolundan aynen gecer.
 
-          Amac:
-          - Orijinal OpenGL goruntusunu korumak
-          - glBegin/glVertex/glEnd cizimlerini CPU tarafinda vertex array + glDrawArrays'a toplamak
-          - Kalabalik character/monster/effect sahnelerinde OpenGL fonksiyon cagri yukunu azaltmak
-          - glFlush beklemesini kaldirmak
-
-          Test:
-          1. Eski MuDX11.dll yedegini alin.
-          2. MuDX11.dll ve MuCrowdFPS.ini dosyalarini client kokune kopyalayin.
-          3. Oyunu normal sekilde acin.
-          4. MuCrowdFPS.log olusmali.
-          5. Ayni kalabalik Aida/Blue Golem sahnesinde FPS test edin.
-
-          Geri donus: eski MuDX11.dll dosyasini geri koyun.
+          Kurulum:
+          1. v1 MuDX11.dll dosyasini kaldirin/yedekleyin.
+          2. Bu paketteki MuDX11.dll + MuCrowdFPS.ini dosyalarini client kokune koyun.
+          3. Ayni Aida kalabalik sahnede test edin.
+          4. MuCrowdFPS.log dosyasini gonderin.
           '@ | Set-Content -Encoding ASCII TEST-TALIMATI.txt
-          Compress-Archive -Path MuDX11.dll,MuCrowdFPS.ini,BUILD-INFO.txt,TEST-TALIMATI.txt -DestinationPath MuCrowdFPS_v1_OriginalMain.zip -Force
+          Compress-Archive -Path MuDX11.dll,MuCrowdFPS.ini,BUILD-INFO.txt,TEST-TALIMATI.txt -DestinationPath MuCrowdFPS_v2_Adaptive_OriginalMain.zip -Force
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: MuCrowdFPS-v1-OriginalMain
-          path: mu-crowdfps/MuCrowdFPS_v1_OriginalMain.zip
+          name: MuCrowdFPS-v2-Adaptive-OriginalMain
+          path: mu-crowdfps/MuCrowdFPS_v2_Adaptive_OriginalMain.zip
           retention-days: 30
