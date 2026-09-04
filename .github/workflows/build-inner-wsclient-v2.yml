@@ -1,0 +1,88 @@
+name: Build Inner WSclient V2
+
+on:
+  push:
+    branches:
+      - chatgpt-inner-crash-v2
+    paths:
+      - '.github/workflows/build-inner-wsclient-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout output repo
+        uses: actions/checkout@v4
+        with:
+          ref: chatgpt-inner-crash-v2
+
+      - name: Fetch matching Main 5.2 WSclient
+        run: |
+          mkdir -p /tmp/main52
+          curl -fsSL 'https://raw.githubusercontent.com/Odisey25/MainMuPubl/main/source/WSclient.cpp' -o /tmp/main52/WSclient.cpp
+
+      - name: Apply Inner 135/136 no-BITMAP_LIGHT fix
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          src = Path('/tmp/main52/WSclient.cpp')
+          s = src.read_text(encoding='utf-8-sig')
+          original = s
+
+          # 1) InsertBuffPhysicalEffect: keep normal HP recovery light, bypass 135/136 physical light.
+          pat1 = re.compile(
+              r'(case\s+eBuff_HpRecovery\s*:\s*\n\s*)'
+              r'case\s+EFFECT_GREATER_LIFE_ENHANCED\s*:\s*\n\s*'
+              r'case\s+EFFECT_GREATER_LIFE_MASTERED\s*:\s*\n\s*'
+              r'\{\s*\n\s*DeleteEffect\(BITMAP_LIGHT\s*,\s*o\s*,\s*1\s*\)\s*;\s*\n\s*'
+              r'CreateEffect\(BITMAP_LIGHT\s*,\s*o->Position\s*,\s*o->Angle\s*,\s*o->Light\s*,\s*1\s*,\s*o\s*\)\s*;\s*\n\s*\}\s*\n\s*break\s*;',
+              re.M)
+          repl1 = '''case eBuff_HpRecovery:\n\t{\n\t\tDeleteEffect(BITMAP_LIGHT, o, 1);\n\t\tCreateEffect(BITMAP_LIGHT, o->Position, o->Angle, o->Light, 1, o);\n\t}\n\tbreak;\n\n\tcase EFFECT_GREATER_LIFE_ENHANCED:\n\tcase EFFECT_GREATER_LIFE_MASTERED:\n\t{\n\t\t// Inner 135/136 V2: logical buff remains; no extra BITMAP_LIGHT.\n\t}\n\tbreak;'''
+          s, n1 = pat1.subn(repl1, s, count=1)
+
+          # 2) ClearBuffPhysicalEffect: don't delete a physical light for 135/136.
+          pat2 = re.compile(
+              r'case\s+eBuff_HpRecovery\s*:\s*\n\s*'
+              r'case\s+EFFECT_GREATER_LIFE_ENHANCED\s*:\s*\n\s*'
+              r'case\s+EFFECT_GREATER_LIFE_MASTERED\s*:\s*\n\s*'
+              r'\{\s*\n\s*DeleteEffect\(BITMAP_LIGHT\s*,\s*o\s*,\s*1\s*\)\s*;\s*\n\s*\}\s*\n\s*break\s*;',
+              re.M)
+          repl2 = '''case eBuff_HpRecovery:\n\t{\n\t\tDeleteEffect(BITMAP_LIGHT, o, 1);\n\t}\n\tbreak;\n\n\tcase EFFECT_GREATER_LIFE_ENHANCED:\n\tcase EFFECT_GREATER_LIFE_MASTERED:\n\t{\n\t\t// Inner 135/136 V2: no physical BITMAP_LIGHT was created.\n\t}\n\tbreak;'''
+          s, n2 = pat2.subn(repl2, s, count=1)
+
+          # 3) Cast animation path: master 360/363 must not recreate BITMAP_LIGHT.
+          pat3 = re.compile(
+              r'if\s*\(\s*!g_isCharacterBuff\(to\s*,\s*eBuff_HpRecovery\)\s*\|\|\s*'
+              r'!g_isCharacterBuff\(to\s*,\s*EFFECT_GREATER_LIFE_ENHANCED\)\s*\|\|\s*'
+              r'!g_isCharacterBuff\(to\s*,\s*EFFECT_GREATER_LIFE_MASTERED\)\s*\)',
+              re.M)
+          repl3 = '''if (MagicNumber != MASTER_SKILL_ADD_GREATER_LIFE_ENHANCED &&\n\t\t\tMagicNumber != MASTER_SKILL_ADD_GREATER_LIFE_MASTERED &&\n\t\t\t!g_isCharacterBuff(to, eBuff_HpRecovery) &&\n\t\t\t!g_isCharacterBuff(to, EFFECT_GREATER_LIFE_ENHANCED) &&\n\t\t\t!g_isCharacterBuff(to, EFFECT_GREATER_LIFE_MASTERED))'''
+          s, n3 = pat3.subn(repl3, s, count=1)
+
+          if (n1, n2, n3) != (1, 1, 1):
+              raise SystemExit(f'Patch pattern mismatch: insert={n1}, clear={n2}, cast={n3}')
+          if s == original:
+              raise SystemExit('No source changes were made')
+
+          out = Path('mu-inner-fix/WSclient_Inner135_136_NoBitmapLight_V2.cpp')
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(s, encoding='utf-8-sig', newline='')
+          print(f'Generated {out} ({out.stat().st_size} bytes)')
+
+      - name: Commit generated source
+        run: |
+          git config user.name 'ChatGPT Fix Builder'
+          git config user.email 'actions@users.noreply.github.com'
+          git add mu-inner-fix/WSclient_Inner135_136_NoBitmapLight_V2.cpp
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+          else
+            git commit -m 'Add ready WSclient Inner 135/136 V2 fix [skip ci]'
+            git push origin HEAD:chatgpt-inner-crash-v2
+          fi
