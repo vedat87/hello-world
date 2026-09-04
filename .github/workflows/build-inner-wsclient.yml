@@ -99,11 +99,13 @@ jobs:
           cd InnerFix_Output
           zip -9 MU_Inner_WSclient_Fix_V2.zip WSclient.cpp README_TR.txt
 
-      - name: Upload artifact
+      - name: Upload ready artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MU_Inner_WSclient_Fix_V2
-          path: InnerFix_Output/MU_Inner_WSclient_Fix_V2.zip
+          name: MU_Inner_WSclient_Fix_V2_READY
+          path: |
+            InnerFix_Output/WSclient.cpp
+            InnerFix_Output/README_TR.txt
 
       - name: Commit generated files
         run: |
