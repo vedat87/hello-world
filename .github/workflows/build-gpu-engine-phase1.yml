@@ -15,12 +15,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Generate Phase3 GPU core
+      - name: Generate Phase3 GPU core + SpecialMain v2 bridge
         shell: pwsh
         run: |
           python mu-gpu-engine-phase1/phase3/build_phase3.py
           python mu-gpu-engine-phase1/phase3/fix_phase3_shutdown.py
           Copy-Item mu-gpu-engine-phase1/special/SpecialMainBridge.cpp out/SpecialMainBridge.cpp -Force
+          python mu-gpu-engine-phase1/special/patch_v2_lazy_cpu.py
 
       - name: Build MuGPU.dll Win32 x86
         shell: cmd
@@ -43,11 +44,17 @@ jobs:
           if(Test-Path MuGPU.dll) {
             (Get-FileHash MuGPU.dll -Algorithm SHA256).Hash | Set-Content mugpu-out/MuGPU_SHA256.txt
           }
+          @'
+Special Main v2
+- GPU eligible opaque meshes skip CPU VertexTransform/NormalTransform in BMD::Transform.
+- If a later render pass needs the legacy CPU arrays, that mesh is transformed lazily once and original rendering is used.
+- MuGPU.log reports GPU draws, fallbacks, skipped vertices/normals and lazy CPU transforms.
+'@ | Set-Content -Encoding UTF8 mugpu-out/V2-NOTES.txt
 
       - name: Upload
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: MuGPU-SpecialMain-x86
+          name: MuGPU-SpecialMain-v2-x86
           path: mugpu-out
           retention-days: 30
