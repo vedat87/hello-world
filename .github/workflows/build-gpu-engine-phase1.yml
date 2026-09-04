@@ -15,7 +15,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Generate GPU core + SpecialMain v3 bridge
+      - name: Generate GPU core + SpecialMain v4 bridge
         shell: pwsh
         run: |
           python mu-gpu-engine-phase1/phase3/build_phase3.py
@@ -24,6 +24,7 @@ jobs:
           python mu-gpu-engine-phase1/special/patch_v2_lazy_cpu.py
           python mu-gpu-engine-phase1/special/fix_v2_seh.py
           python mu-gpu-engine-phase1/special/patch_v3_bone_texture_compat.py
+          python mu-gpu-engine-phase1/special/patch_v4_pot_rgba32f.py
 
       - name: Build MuGPU.dll Win32 x86
         shell: cmd
@@ -46,12 +47,12 @@ jobs:
           if(Test-Path MuGPU.dll) {
             (Get-FileHash MuGPU.dll -Algorithm SHA256).Hash | Set-Content mugpu-out/MuGPU_SHA256.txt
           }
-          "Special Main v3 - fixes GPU path unavailable on compatibility OpenGL drivers by trying RGBA32F then RGBA16F for the bone palette; retains v2 CPU vertex/normal bypass and lazy CPU fallback. MuGPU.log reports selected palette mode." | Set-Content -Encoding UTF8 mugpu-out/V3-NOTES.txt
+          "Special Main v4 - removes the visually corrupt RGBA16F path. Uses full-precision POT 4x256 RGBA32F bone palette; if unavailable, GPU path is disabled and original CPU rendering is preserved. CPU transform bypass is only enabled after GPU initialization succeeds." | Set-Content -Encoding UTF8 mugpu-out/V4-NOTES.txt
 
       - name: Upload
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: MuGPU-SpecialMain-v3-x86
+          name: MuGPU-SpecialMain-v4-x86
           path: mugpu-out
           retention-days: 30
