@@ -19,6 +19,7 @@ jobs:
         shell: pwsh
         run: |
           python mu-gpu-engine-phase1/phase3/build_phase3.py
+          python mu-gpu-engine-phase1/phase3/fix_phase3_shutdown.py
           Copy-Item mu-gpu-engine-phase1/special/SpecialMainBridge.cpp out/SpecialMainBridge.cpp -Force
 
       - name: Build MuGPU.dll Win32 x86
