@@ -1,0 +1,118 @@
+name: Build Inner WSclient Fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/build-inner-wsclient.yml'
+      - 'trigger-inner-fix.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch matching Main 5.2 WSclient.cpp
+        run: |
+          mkdir -p InnerFix_Output
+          curl -L --fail --retry 3 \
+            https://raw.githubusercontent.com/Odisey25/MainMuPubl/main/source/WSclient.cpp \
+            -o InnerFix_Output/WSclient.cpp
+
+      - name: Patch Greater Life / Inner BITMAP_LIGHT logic
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path('InnerFix_Output/WSclient.cpp')
+          raw = p.read_bytes()
+          bom = raw.startswith(b'\xef\xbb\xbf')
+          text = raw.decode('utf-8-sig', errors='strict')
+
+          required = [
+              'MASTER_SKILL_ADD_GREATER_LIFE_IMPROVED',
+              'MASTER_SKILL_ADD_GREATER_LIFE_ENHANCED',
+              'MASTER_SKILL_ADD_GREATER_LIFE_MASTERED',
+              'EFFECT_GREATER_LIFE_ENHANCED',
+              'EFFECT_GREATER_LIFE_MASTERED',
+          ]
+          missing = [x for x in required if x not in text]
+          if missing:
+              raise SystemExit(f'Missing expected Greater Life symbols: {missing}')
+
+          pattern = re.compile(
+              r'if\s*\(\s*'
+              r'!g_isCharacterBuff\(to\s*,\s*eBuff_HpRecovery\)\s*\|\|\s*'
+              r'!g_isCharacterBuff\(to\s*,\s*EFFECT_GREATER_LIFE_ENHANCED\)\s*\|\|\s*'
+              r'!g_isCharacterBuff\(to\s*,\s*EFFECT_GREATER_LIFE_MASTERED\)\s*\)'
+          )
+
+          replacement = (
+              'if(\n'
+              '\t\t!g_isCharacterBuff(to,eBuff_HpRecovery)\n'
+              '\t\t&& !g_isCharacterBuff(to,EFFECT_GREATER_LIFE_ENHANCED)\n'
+              '\t\t&& !g_isCharacterBuff(to,EFFECT_GREATER_LIFE_MASTERED))'
+          )
+
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one Inner BITMAP_LIGHT condition, found {count}')
+
+          out = text.encode('utf-8')
+          if bom:
+              out = b'\xef\xbb\xbf' + out
+          p.write_bytes(out)
+
+          readme = Path('InnerFix_Output/README_TR.txt')
+          readme.write_text(
+              'MU Online Main 5.2 - BK Inner / Greater Life WSclient Fix\n\n'
+              'Degisiklik:\n'
+              '- Greater Life/Inner efekt kontrolundeki || kosullari && yapildi.\n'
+              '- BITMAP_LIGHT yalnizca hicbir Greater Life buffi aktif degilse yeniden olusturulur.\n'
+              '- Skill 356/360/363 gonderim ve animasyon kodlarina dokunulmadi.\n\n'
+              'Dosya: WSclient.cpp\n',
+              encoding='utf-8'
+          )
+
+      - name: Verify patch
+        shell: python
+        run: |
+          from pathlib import Path
+          s = Path('InnerFix_Output/WSclient.cpp').read_text(encoding='utf-8-sig')
+          expected = (
+              '!g_isCharacterBuff(to,eBuff_HpRecovery)\n'
+              '\t\t&& !g_isCharacterBuff(to,EFFECT_GREATER_LIFE_ENHANCED)\n'
+              '\t\t&& !g_isCharacterBuff(to,EFFECT_GREATER_LIFE_MASTERED)'
+          )
+          if expected not in s:
+              raise SystemExit('Patched condition verification failed')
+          print('Inner WSclient patch verified.')
+
+      - name: Create ZIP
+        run: |
+          cd InnerFix_Output
+          zip -9 MU_Inner_WSclient_Fix_V2.zip WSclient.cpp README_TR.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MU_Inner_WSclient_Fix_V2
+          path: InnerFix_Output/MU_Inner_WSclient_Fix_V2.zip
+
+      - name: Commit generated files
+        run: |
+          git config user.name 'ChatGPT Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add InnerFix_Output/WSclient.cpp InnerFix_Output/README_TR.txt InnerFix_Output/MU_Inner_WSclient_Fix_V2.zip
+          if git diff --cached --quiet; then
+            echo 'No output changes.'
+            exit 0
+          fi
+          git commit -m 'Generate Inner WSclient V2 fix'
+          git push
