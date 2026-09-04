@@ -1,0 +1,54 @@
+name: Build Special Main MuGPU x86
+
+on:
+  push:
+    branches: [ "mu-gpu-engine-phase1" ]
+    paths:
+      - ".github/workflows/build-special-main-mugpu.yml"
+      - "mu-gpu-engine-phase1/special/**"
+      - "mu-gpu-engine-phase1/legacy/**"
+      - "mu-gpu-engine-phase1/phase3/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate Phase3 GPU core
+        shell: pwsh
+        run: |
+          python mu-gpu-engine-phase1/phase3/build_phase3.py
+          Copy-Item mu-gpu-engine-phase1/special/SpecialMainBridge.cpp out/SpecialMainBridge.cpp -Force
+
+      - name: Build MuGPU.dll Win32 x86
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i
+          echo VSINSTALL=%VSINSTALL%> mugpu-build.txt
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cl 2>> mugpu-build.txt
+          cl /nologo /O2 /MT /EHsc /std:c++17 /DWIN32 /D_WINDOWS /LD out\SpecialMainBridge.cpp out\GpuSkinningLegacy.cpp /Fe:MuGPU.dll /link opengl32.lib user32.lib kernel32.lib /OUT:MuGPU.dll >> mugpu-build.txt 2>&1
+          if errorlevel 1 type mugpu-build.txt & exit /b 1
+
+      - name: Collect package
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force mugpu-out | Out-Null
+          foreach($f in @('MuGPU.dll','MuGPU.lib','mugpu-build.txt','out/GpuSkinningLegacy.h','out/GpuSkinningLegacy.cpp','out/SpecialMainBridge.cpp','out/PHASE3-INDEXED.txt')) {
+            if(Test-Path $f) { Copy-Item $f mugpu-out/ -Force }
+          }
+          if(Test-Path MuGPU.dll) {
+            (Get-FileHash MuGPU.dll -Algorithm SHA256).Hash | Set-Content mugpu-out/MuGPU_SHA256.txt
+          }
+
+      - name: Upload MuGPU x86
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MuGPU-SpecialMain-x86
+          path: mugpu-out
+          retention-days: 30
