@@ -8,7 +8,8 @@
 #include <cmath>
 #include <cstring>
 
-extern double WorldTime;
+// Louis/Main5.2 declares WorldTime as float in ZzzOpenglUtil.h.
+extern float WorldTime;
 
 namespace
 {
@@ -119,8 +120,16 @@ namespace BMDGpuBridge
         r.boneScale = boneScale;
         r.bodyScale = bmd->BodyScale;
         VectorCopy(bmd->BodyOrigin, r.bodyOrigin);
-        if (lightDirection) VectorCopy(lightDirection, r.lightDirection);
-        else Vector(0.f, 0.f, 0.f, r.lightDirection);
+        // VectorCopy/Vector are brace macros in the legacy client, so use explicit
+        // compound statements to avoid a dangling/illegal `else` after macro expansion.
+        if (lightDirection)
+        {
+            VectorCopy(lightDirection, r.lightDirection);
+        }
+        else
+        {
+            Vector(0.f, 0.f, 0.f, r.lightDirection);
+        }
         r.lightEnabled = bmd->LightEnable;
         r.serial = ++gSerial;
         std::memset(r.cpuVertsReady, 0, sizeof(r.cpuVertsReady));
@@ -245,9 +254,9 @@ namespace BMDGpuBridge
         s.texOffset[1] = texOffsetV;
         s.chromeWave = static_cast<long>(WorldTime) % 10000 * 0.0001f;
         s.chromeWave2 = static_cast<int>(WorldTime) % 5000 * 0.00024f - 0.4f;
-        s.chromeLight[0] = static_cast<float>(std::cos(WorldTime * 0.001));
-        s.chromeLight[1] = static_cast<float>(std::sin(WorldTime * 0.002));
-        s.chromeTimeTerm = static_cast<float>(std::fmod(WorldTime * 0.00006, 4096.0));
+        s.chromeLight[0] = static_cast<float>(std::cos(WorldTime * 0.001f));
+        s.chromeLight[1] = static_cast<float>(std::sin(WorldTime * 0.002f));
+        s.chromeTimeTerm = static_cast<float>(std::fmod(static_cast<double>(WorldTime) * 0.00006, 4096.0));
         s.translate = r->translate ? 1 : 0;
         s.lightEnabled = lightEnabled ? 1 : 0;
         s.texCoordMode = ResolveTexMode(renderFlags, finalRenderFlags);
