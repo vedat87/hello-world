@@ -1,4 +1,4 @@
-name: Build MU GPU Engine Phase1 Kit
+name: Build Special Main MuGPU x86
 
 on:
   push:
@@ -9,119 +9,44 @@ on:
   workflow_dispatch:
 
 jobs:
-  package:
+  build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Prepare legacy Source Main 5.2 GPU files
+      - name: Generate Phase3 GPU core
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force out | Out-Null
-          Copy-Item mu-gpu-engine-phase1/legacy/* out/
+          python mu-gpu-engine-phase1/phase3/build_phase3.py
+          Copy-Item mu-gpu-engine-phase1/special/SpecialMainBridge.cpp out/SpecialMainBridge.cpp -Force
 
-          # Bone palette must be uploaded once per transformed body, not once per mesh.
-          # Normalize line endings so the source rewrite is deterministic.
-          $path = "out/GpuSkinningLegacy.cpp"
-          $cpp = (Get-Content $path -Raw) -replace "`r`n", "`n"
-          $cpp = $cpp.Replace("    GLuint gBoneTexture = 0;`n", "    GLuint gBoneTexture = 0;`n    std::uint32_t gLastPaletteSerial = 0;`n")
-
-          $needle = @'
-        // Upload one compact 3x4 affine palette. 200 bones = 9.6 KB max.
-        glActiveTexture_(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, gBoneTexture);
-        const int rows = s.boneCount > 200 ? 200 : s.boneCount;
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 3, rows, GL_RGBA, GL_FLOAT, s.boneRows);
-        if (glGetError() != GL_NO_ERROR)
-        {
-            glActiveTexture_(GL_TEXTURE0);
-            gError = "Bone palette upload failed";
-            return false;
-        }
-'@
-          $replacement = @'
-        // One 9.6 KB palette upload per transformed body. All meshes of the same
-        // BMD draw reuse it until BMDGpuBridge increments paletteSerial.
-        if (gLastPaletteSerial != s.paletteSerial)
-        {
-            glActiveTexture_(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, gBoneTexture);
-            const int rows = s.boneCount > 200 ? 200 : s.boneCount;
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 3, rows, GL_RGBA, GL_FLOAT, s.boneRows);
-            if (glGetError() != GL_NO_ERROR)
-            {
-                glActiveTexture_(GL_TEXTURE0);
-                gError = "Bone palette upload failed";
-                return false;
-            }
-            gLastPaletteSerial = s.paletteSerial;
-        }
-'@
-          if (-not $cpp.Contains($needle)) { throw "Bone palette upload block not found" }
-          $cpp = $cpp.Replace($needle, $replacement)
-          [IO.File]::WriteAllText((Resolve-Path $path), $cpp, [Text.UTF8Encoding]::new($false))
-
-          @'
-          Main GPU Engine Phase1 - LEGACY OPENGL / SOURCE MAIN 5.2
-          ========================================================
-
-          Bu paket eski MuCrowdFPS glBegin/glEnd hook sistemi DEGILDIR.
-          Main'in kendi OpenGL compatibility context'i korunur.
-
-          GPU'ya tasinan is:
-          - Rest-pose BMD position/normal + bone index static VBO
-          - 3x200 RGBA32F bone palette texture
-          - Vertex shader skeletal position skinning
-          - Shader tarafinda normal transform + legacy lighting/chrome UV formulleri
-
-          Phase1 guvenlik:
-          - Shadowmap/wave/color/bright ve cloth/physics CPU fallback
-          - Shader/vertex-texture destegi yoksa otomatik CPU fallback
-          - ZzzBMD class layout'ini degistirmez; bridge state disarida tutulur
-          - Main protocol/custom packet koduna dokunmaz
-
-          Test sirasi:
-          1. Once temiz v0.9/Phase2 orijinal goruntu tabanina donun.
-          2. Kaynaga bu paketteki 4 dosyayi ekleyin ve INTEGRATION dosyasindaki noktalari uygulayin.
-          3. VS2026 Win32 Release derleyin.
-          4. Ayni Aida Blue Golem kalabalik sahnede FPS olcun.
-          5. GPU yolu calisiyorsa CPU vertex Transform dongusu normal oyunda atlanir.
-          '@ | Set-Content -Encoding UTF8 out/README-FIRST.txt
-
-      - name: Compile GPU core with Visual Studio 2026 x86
+      - name: Build MuGPU.dll Win32 x86
         shell: cmd
         run: |
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i
+          echo VSINSTALL=%VSINSTALL%> mugpu-build.txt
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
-          cd out
-          cl /nologo /c /O2 /GL /MT /EHsc /std:c++17 /DWIN32 /D_WINDOWS GpuSkinningLegacy.cpp
-          lib /nologo /LTCG /OUT:GpuSkinningLegacy_x86.lib GpuSkinningLegacy.obj
-          dumpbin /headers GpuSkinningLegacy.obj | findstr /i "machine" > BUILD-VERIFY.txt
-          echo Visual Studio 2026 x86 compile: SUCCESS>> BUILD-VERIFY.txt
+          cl 2>> mugpu-build.txt
+          cl /nologo /O2 /MT /EHsc /std:c++17 /DWIN32 /D_WINDOWS /LD out\SpecialMainBridge.cpp out\GpuSkinningLegacy.cpp /Fe:MuGPU.dll /link opengl32.lib user32.lib kernel32.lib /OUT:MuGPU.dll >> mugpu-build.txt 2>&1
+          if errorlevel 1 type mugpu-build.txt & exit /b 1
 
-      - name: Include upstream measured GPU reference
+      - name: Collect
+        if: always()
         shell: pwsh
         run: |
-          @'
-          UPSTREAM REFERENCE
-          ==================
-          Same Season 5.2/Louis lineage reference commit:
-          0702144c8446cef41e4b28b95576376aae93f2e4
+          New-Item -ItemType Directory -Force mugpu-out | Out-Null
+          foreach($f in @('MuGPU.dll','MuGPU.lib','mugpu-build.txt','out/GpuSkinningLegacy.h','out/GpuSkinningLegacy.cpp','out/SpecialMainBridge.cpp','out/PHASE3-INDEXED.txt')) {
+            if(Test-Path $f) { Copy-Item $f mugpu-out/ -Force }
+          }
+          if(Test-Path MuGPU.dll) {
+            (Get-FileHash MuGPU.dll -Algorithm SHA256).Hash | Set-Content mugpu-out/MuGPU_SHA256.txt
+          }
 
-          Reference implementation moved BMD::Transform per-vertex skinning to the GPU.
-          Reported Transform self-time at a crowded spot: ~0.25 ms -> ~0.01-0.02 ms.
-          This package is a smaller legacy-compatibility backport approach; it does not copy the
-          upstream renderer wholesale and therefore does not claim the same final FPS before testing.
-          '@ | Set-Content -Encoding UTF8 out/UPSTREAM-REFERENCE.txt
-
-      - name: Create package
-        shell: pwsh
-        run: |
-          Compress-Archive -Path out/* -DestinationPath Main_GPU_Engine_Phase1_Legacy_x86.zip -Force
-
-      - name: Upload package
+      - name: Upload
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Main-GPU-Engine-Phase1-Legacy-x86
-          path: Main_GPU_Engine_Phase1_Legacy_x86.zip
+          name: MuGPU-SpecialMain-x86
+          path: mugpu-out
           retention-days: 30
