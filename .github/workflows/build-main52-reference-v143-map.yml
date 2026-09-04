@@ -1,0 +1,61 @@
+name: Build Main52 Reference v143 Map
+
+on:
+  push:
+    branches: [ "mu-gpu-engine-phase1" ]
+    paths:
+      - ".github/workflows/build-main52-reference-v143-map.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout Main 5.2 exact baseline
+        uses: actions/checkout@v4
+        with:
+          repository: LouisEmulator/Main5.2
+          ref: acfdd2bf8bd8f8ca6d0c15e1a3e71a70b89924c5
+          path: louis
+
+      - name: Prepare v143 project
+        shell: pwsh
+        run: |
+          $proj = 'louis/Source Main 5.2/Main.vcxproj'
+          $c = Get-Content $proj -Raw
+          $c = $c.Replace('<PlatformToolset>v142</PlatformToolset>', '<PlatformToolset>v143</PlatformToolset>')
+          $c = $c.Replace(';C:\Libraries\boost_1_75_0\stage\lib','')
+          Set-Content $proj $c -Encoding utf8
+
+      - name: Build Global Release Win32 and map
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cl 2> compiler-version.txt
+          msbuild -version >> compiler-version.txt
+          msbuild "louis\Source Main 5.2\Main.sln" /m /t:Build /p:Configuration="Global Release" /p:Platform=Win32 /p:PlatformToolset=v143 /verbosity:minimal /fl /flp:logfile=reference-v143-msbuild.log;verbosity=diagnostic
+
+      - name: Collect reference
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force reference-out | Out-Null
+          Copy-Item compiler-version.txt reference-out/ -Force -ErrorAction SilentlyContinue
+          Copy-Item reference-v143-msbuild.log reference-out/ -Force -ErrorAction SilentlyContinue
+          $main = Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter Main.exe -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if($main) {
+            Copy-Item $main.FullName 'reference-out/Main_Reference_v143.exe' -Force
+            (Get-FileHash $main.FullName -Algorithm SHA256).Hash | Set-Content 'reference-out/Main_Reference_v143_SHA256.txt'
+          }
+          $map1 = 'louis/Source Main 5.2/Global Release/Main'
+          if(Test-Path $map1) { Copy-Item $map1 'reference-out/Main_Reference_v143.map' -Force }
+          $map2 = Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter '*.map' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if($map2) { Copy-Item $map2.FullName 'reference-out/Main_Reference_v143_alt.map' -Force }
+
+      - name: Upload reference
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Main52-Reference-v143-Map
+          path: reference-out
+          retention-days: 30
