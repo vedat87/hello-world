@@ -1,0 +1,58 @@
+name: Build Louis Main52 Baseline Win32
+
+on:
+  push:
+    branches: [ "mu-gpu-engine-phase1" ]
+    paths:
+      - ".github/workflows/build-louis-main52-baseline.yml"
+      - "mu-gpu-engine-phase1/main52-baseline-trigger.txt"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout integration repo
+        uses: actions/checkout@v4
+        with:
+          path: integration
+
+      - name: Checkout exact Louis Main 5.2 baseline
+        uses: actions/checkout@v4
+        with:
+          repository: LouisEmulator/Main5.2
+          ref: acfdd2bf8bd8f8ca6d0c15e1a3e71a70b89924c5
+          path: louis
+
+      - name: Prepare VS2022 Win32 build
+        shell: pwsh
+        run: |
+          $proj = 'louis/Source Main 5.2/Main.vcxproj'
+          $c = Get-Content $proj -Raw
+          $c = $c.Replace('<PlatformToolset>v142</PlatformToolset>', '<PlatformToolset>v143</PlatformToolset>')
+          # The public project contains one machine-specific Boost library path. Standalone ASIO is bundled in dependencies.
+          $c = $c.Replace(';C:\Libraries\boost_1_75_0\stage\lib','')
+          Set-Content $proj $c -Encoding utf8
+
+      - name: Build Global Release Win32
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          msbuild "louis\Source Main 5.2\Main.sln" /m /t:Build /p:Configuration="Global Release" /p:Platform=Win32 /p:PlatformToolset=v143 /verbosity:minimal /fl /flp:logfile=baseline-msbuild.log;verbosity=diagnostic
+
+      - name: Collect baseline result
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force baseline-out | Out-Null
+          if (Test-Path 'baseline-msbuild.log') { Copy-Item 'baseline-msbuild.log' baseline-out/ }
+          Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter Main.exe -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName baseline-out/ -Force }
+          Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter Main.map -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName baseline-out/ -Force }
+
+      - name: Upload baseline result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Louis-Main52-Baseline-Win32
+          path: baseline-out
+          retention-days: 30
