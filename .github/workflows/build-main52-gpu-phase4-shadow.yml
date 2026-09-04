@@ -1,0 +1,82 @@
+name: Build Main52 GPU Phase4 Shadow
+
+on:
+  push:
+    branches: [ "mu-gpu-engine-phase1" ]
+    paths:
+      - ".github/workflows/build-main52-gpu-phase4-shadow.yml"
+      - "mu-gpu-engine-phase1/phase4/apply_gpu_shadow.py"
+      - "mu-gpu-engine-phase1/main52/apply_phase4_shadow_integration.py"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout GPU integration
+        uses: actions/checkout@v4
+        with:
+          path: integration
+
+      - name: Checkout exact Source Main 5.2 baseline
+        uses: actions/checkout@v4
+        with:
+          repository: LouisEmulator/Main5.2
+          ref: acfdd2bf8bd8f8ca6d0c15e1a3e71a70b89924c5
+          path: louis
+
+      - name: Generate Phase3 indexed GPU engine
+        shell: pwsh
+        run: |
+          Push-Location integration
+          python mu-gpu-engine-phase1/phase3/build_phase3.py
+          python mu-gpu-engine-phase1/phase3/fix_phase3_shutdown.py
+          python mu-gpu-engine-phase1/phase4/apply_gpu_shadow.py out
+          Pop-Location
+
+      - name: Integrate Phase3 and Phase4 into Main 5.2
+        shell: pwsh
+        run: |
+          python integration/mu-gpu-engine-phase1/main52/integrate_gpu_phase3.py "louis/Source Main 5.2" "integration/out"
+          python integration/mu-gpu-engine-phase1/main52/apply_phase4_shadow_integration.py "louis/Source Main 5.2"
+          $proj = 'louis/Source Main 5.2/Main.vcxproj'
+          $c = Get-Content $proj -Raw
+          $c = $c.Replace('<PlatformToolset>v142</PlatformToolset>', '<PlatformToolset>v143</PlatformToolset>')
+          $c = $c.Replace(';C:\Libraries\boost_1_75_0\stage\lib','')
+          Set-Content $proj $c -Encoding utf8
+
+      - name: Build GPU Phase4 Global Release x86
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          msbuild "louis\Source Main 5.2\Main.sln" /m /t:Build /p:Configuration="Global Release" /p:Platform=x86 /p:PlatformToolset=v143 /verbosity:minimal /fl /flp:logfile=gpu-phase4-shadow-msbuild.log;verbosity=diagnostic
+
+      - name: Collect Phase4 package
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force phase4-shadow-out | Out-Null
+          foreach($f in @('gpu-phase4-shadow-msbuild.log','louis/Source Main 5.2/GPU-PHASE3-INTEGRATION.txt','louis/Source Main 5.2/GPU-PHASE4-SHADOW-INTEGRATION.txt','integration/out/PHASE4-GPU-SHADOW.txt')) {
+            if(Test-Path $f) { Copy-Item $f phase4-shadow-out/ -Force }
+          }
+          foreach($n in @('ZzzBMD.cpp','ZzzBMD.h','PhysicsManager.cpp','GpuSkinningLegacy.cpp','GpuSkinningLegacy.h','BMDGpuBridge.cpp','BMDGpuBridge.h')) {
+            $f = Join-Path 'louis/Source Main 5.2/source' $n
+            if(Test-Path $f) { Copy-Item $f phase4-shadow-out/ -Force }
+          }
+          if(Test-Path 'louis/Source Main 5.2/Main.vcxproj') { Copy-Item 'louis/Source Main 5.2/Main.vcxproj' phase4-shadow-out/ }
+          $main = Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter Main.exe -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if($main) {
+            Copy-Item $main.FullName 'phase4-shadow-out/Main_GPU_Phase4_Shadow.exe' -Force
+            (Get-FileHash $main.FullName -Algorithm SHA256).Hash | Set-Content 'phase4-shadow-out/Main_GPU_Phase4_Shadow_SHA256.txt'
+            (Get-Item $main.FullName).Length | Set-Content 'phase4-shadow-out/Main_GPU_Phase4_Shadow_SIZE.txt'
+          }
+          $map = Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter Main.map -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if($map) { Copy-Item $map.FullName phase4-shadow-out/ -Force }
+
+      - name: Upload Phase4 package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Main-GPU-Phase4-Shadow-x86
+          path: phase4-shadow-out
+          retention-days: 30
