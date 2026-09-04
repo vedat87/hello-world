@@ -1,0 +1,61 @@
+name: Package Main52 GPU Patched Sources
+
+on:
+  push:
+    branches: [ "mu-gpu-engine-phase1" ]
+    paths:
+      - ".github/workflows/package-main52-gpu-patched-sources.yml"
+      - "mu-gpu-engine-phase1/main52/source-package-trigger.txt"
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: integration
+
+      - name: Fetch exact render source files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force work/source | Out-Null
+          $base = 'https://raw.githubusercontent.com/LouisEmulator/Main5.2/acfdd2bf8bd8f8ca6d0c15e1a3e71a70b89924c5/Source%20Main%205.2'
+          Invoke-WebRequest "$base/source/ZzzBMD.cpp" -OutFile work/source/ZzzBMD.cpp
+          Invoke-WebRequest "$base/source/ZzzBMD.h" -OutFile work/source/ZzzBMD.h
+          Invoke-WebRequest "$base/source/PhysicsManager.cpp" -OutFile work/source/PhysicsManager.cpp
+          Invoke-WebRequest "$base/source/stdafx.h" -OutFile work/source/stdafx.h
+          Invoke-WebRequest "$base/Main.vcxproj" -OutFile work/Main.vcxproj
+
+      - name: Generate Phase3 indexed GPU files
+        shell: pwsh
+        run: |
+          Push-Location integration
+          python mu-gpu-engine-phase1/phase3/build_phase3.py
+          python mu-gpu-engine-phase1/phase3/fix_phase3_shutdown.py
+          Pop-Location
+
+      - name: Apply exact integration
+        shell: pwsh
+        run: |
+          python integration/mu-gpu-engine-phase1/main52/integrate_gpu_phase3.py work integration/out
+          @'
+          INSTALL:
+          Copy all files from source/ into your Source Main 5.2/source/ folder.
+          Replace Main.vcxproj with the supplied patched Main.vcxproj.
+          Build Global Release / Win32.
+
+          This package changes the render/BMD/physics integration only. It does not replace game protocol/custom systems.
+          '@ | Set-Content work/README-GPU-PHASE3.txt -Encoding utf8
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path work/* -DestinationPath Main_GPU_Phase3_Patched_SourceMain52.zip -Force
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Main-GPU-Phase3-Patched-SourceMain52
+          path: Main_GPU_Phase3_Patched_SourceMain52.zip
+          retention-days: 30
