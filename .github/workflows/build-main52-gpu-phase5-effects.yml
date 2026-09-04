@@ -1,0 +1,108 @@
+name: Build Main52 GPU Phase5 Effects
+
+on:
+  push:
+    branches: [ "mu-gpu-engine-phase1" ]
+    paths:
+      - ".github/workflows/build-main52-gpu-phase5-effects.yml"
+      - "mu-gpu-engine-phase1/phase5/**"
+      - "mu-gpu-engine-phase1/main52/apply_phase5_effect_instancing.py"
+      - "mu-gpu-engine-phase1/phase4/apply_gpu_shadow.py"
+      - "mu-gpu-engine-phase1/main52/apply_phase4_shadow_integration.py"
+      - "mu-gpu-engine-phase1/phase3/**"
+      - "mu-gpu-engine-phase1/main52/integrate_gpu_phase3.py"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout GPU integration
+        uses: actions/checkout@v4
+        with:
+          path: integration
+
+      - name: Checkout Main 5.2 baseline
+        uses: actions/checkout@v4
+        with:
+          repository: LouisEmulator/Main5.2
+          ref: acfdd2bf8bd8f8ca6d0c15e1a3e71a70b89924c5
+          path: louis
+
+      - name: Generate Phase3 and Phase4 GPU sources
+        shell: pwsh
+        run: |
+          Push-Location integration
+          python mu-gpu-engine-phase1/phase3/build_phase3.py
+          python mu-gpu-engine-phase1/phase3/fix_phase3_shutdown.py
+          python mu-gpu-engine-phase1/phase4/apply_gpu_shadow.py out
+          Pop-Location
+
+      - name: Integrate GPU Phase3 to Phase5
+        shell: pwsh
+        run: |
+          python integration/mu-gpu-engine-phase1/main52/integrate_gpu_phase3.py "louis/Source Main 5.2" "integration/out"
+          python integration/mu-gpu-engine-phase1/main52/apply_phase4_shadow_integration.py "louis/Source Main 5.2"
+          python integration/mu-gpu-engine-phase1/main52/apply_phase5_effect_instancing.py "louis/Source Main 5.2" "integration/mu-gpu-engine-phase1/phase5"
+
+          $proj = 'louis/Source Main 5.2/Main.vcxproj'
+          $c = Get-Content $proj -Raw
+          $c = $c.Replace('<PlatformToolset>v142</PlatformToolset>', '<PlatformToolset>v145</PlatformToolset>')
+          $c = $c.Replace('<PlatformToolset>v143</PlatformToolset>', '<PlatformToolset>v145</PlatformToolset>')
+          $c = $c.Replace(';C:\Libraries\boost_1_75_0\stage\lib','')
+          Set-Content $proj $c -Encoding utf8
+
+      - name: Build GPU Phase5 Global Release x86 with latest Visual Studio
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i
+          echo VSINSTALL=%VSINSTALL%> gpu-phase5-build-environment.txt
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cl 2>> gpu-phase5-build-environment.txt
+          msbuild -version >> gpu-phase5-build-environment.txt
+          msbuild "louis\Source Main 5.2\Main.sln" /m /t:Build /p:Configuration="Global Release" /p:Platform=x86 /p:PlatformToolset=v145 /p:PreferredToolArchitecture=x64 /verbosity:minimal /fl /flp:logfile=gpu-phase5-msbuild.log;verbosity=diagnostic
+
+      - name: Collect Phase5 package
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force phase5-out | Out-Null
+          foreach($f in @(
+            'gpu-phase5-msbuild.log',
+            'gpu-phase5-build-environment.txt',
+            'louis/Source Main 5.2/GPU-PHASE3-INTEGRATION.txt',
+            'louis/Source Main 5.2/GPU-PHASE4-SHADOW-INTEGRATION.txt',
+            'louis/Source Main 5.2/GPU-PHASE5-EFFECT-INSTANCING.txt',
+            'integration/out/PHASE4-GPU-SHADOW.txt')) {
+            if(Test-Path $f) { Copy-Item $f phase5-out/ -Force }
+          }
+
+          foreach($n in @(
+            'ZzzBMD.cpp','ZzzBMD.h','PhysicsManager.cpp','zzzeffectsprite.cpp',
+            'GpuSkinningLegacy.cpp','GpuSkinningLegacy.h','BMDGpuBridge.cpp','BMDGpuBridge.h',
+            'GpuSpriteBatch.cpp','GpuSpriteBatch.h')) {
+            $f = Join-Path 'louis/Source Main 5.2/source' $n
+            if(Test-Path $f) { Copy-Item $f phase5-out/ -Force }
+          }
+
+          if(Test-Path 'louis/Source Main 5.2/Main.vcxproj') {
+            Copy-Item 'louis/Source Main 5.2/Main.vcxproj' phase5-out/ -Force
+          }
+
+          $main = Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter Main.exe -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if($main) {
+            Copy-Item $main.FullName 'phase5-out/Main_GPU_Phase5_EffectInstancing.exe' -Force
+            (Get-FileHash $main.FullName -Algorithm SHA256).Hash | Set-Content 'phase5-out/Main_GPU_Phase5_EffectInstancing_SHA256.txt'
+            (Get-Item $main.FullName).Length | Set-Content 'phase5-out/Main_GPU_Phase5_EffectInstancing_SIZE.txt'
+          }
+
+          $map = Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter Main.map -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if($map) { Copy-Item $map.FullName phase5-out/ -Force }
+
+      - name: Upload Phase5 package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Main-GPU-Phase5-EffectInstancing-v145-x86
+          path: phase5-out
+          retention-days: 30
