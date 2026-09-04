@@ -1,0 +1,79 @@
+name: Build Main52 GPU Phase3 Integrated
+
+on:
+  push:
+    branches: [ "mu-gpu-engine-phase1" ]
+    paths:
+      - ".github/workflows/build-main52-gpu-phase3-integrated.yml"
+      - "mu-gpu-engine-phase1/main52/integrate_gpu_phase3.py"
+      - "mu-gpu-engine-phase1/main52-gpu-trigger.txt"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout GPU integration
+        uses: actions/checkout@v4
+        with:
+          path: integration
+
+      - name: Checkout exact Source Main 5.2 baseline
+        uses: actions/checkout@v4
+        with:
+          repository: LouisEmulator/Main5.2
+          ref: acfdd2bf8bd8f8ca6d0c15e1a3e71a70b89924c5
+          path: louis
+
+      - name: Generate Phase3 indexed GPU sources
+        shell: pwsh
+        run: |
+          Push-Location integration
+          python mu-gpu-engine-phase1/phase3/build_phase3.py
+          python mu-gpu-engine-phase1/phase3/fix_phase3_shutdown.py
+          Pop-Location
+
+      - name: Integrate GPU engine into Main 5.2
+        shell: pwsh
+        run: |
+          python integration/mu-gpu-engine-phase1/main52/integrate_gpu_phase3.py "louis/Source Main 5.2" "integration/out"
+          $proj = 'louis/Source Main 5.2/Main.vcxproj'
+          $c = Get-Content $proj -Raw
+          $c = $c.Replace('<PlatformToolset>v142</PlatformToolset>', '<PlatformToolset>v143</PlatformToolset>')
+          $c = $c.Replace(';C:\Libraries\boost_1_75_0\stage\lib','')
+          Set-Content $proj $c -Encoding utf8
+
+      - name: Build GPU Main Global Release x86
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          msbuild "louis\Source Main 5.2\Main.sln" /m /t:Build /p:Configuration="Global Release" /p:Platform=x86 /p:PlatformToolset=v143 /verbosity:minimal /fl /flp:logfile=gpu-main-msbuild.log;verbosity=diagnostic
+
+      - name: Collect GPU Main package
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force gpu-main-out | Out-Null
+          if (Test-Path 'gpu-main-msbuild.log') { Copy-Item gpu-main-msbuild.log gpu-main-out/ }
+          if (Test-Path 'louis/Source Main 5.2/GPU-PHASE3-INTEGRATION.txt') { Copy-Item 'louis/Source Main 5.2/GPU-PHASE3-INTEGRATION.txt' gpu-main-out/ }
+          foreach($n in @('ZzzBMD.cpp','ZzzBMD.h','PhysicsManager.cpp','GpuSkinningLegacy.cpp','GpuSkinningLegacy.h','BMDGpuBridge.cpp','BMDGpuBridge.h')) {
+            $f = Join-Path 'louis/Source Main 5.2/source' $n
+            if(Test-Path $f) { Copy-Item $f gpu-main-out/ -Force }
+          }
+          if(Test-Path 'louis/Source Main 5.2/Main.vcxproj') { Copy-Item 'louis/Source Main 5.2/Main.vcxproj' gpu-main-out/ }
+          $main = Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter Main.exe -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if($main) {
+            Copy-Item $main.FullName 'gpu-main-out/Main_GPU_Phase3.exe' -Force
+            (Get-FileHash $main.FullName -Algorithm SHA256).Hash | Set-Content 'gpu-main-out/Main_GPU_Phase3_SHA256.txt'
+            (Get-Item $main.FullName).Length | Set-Content 'gpu-main-out/Main_GPU_Phase3_SIZE.txt'
+          }
+          $map = Get-ChildItem 'louis/Source Main 5.2' -Recurse -Filter Main.map -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if($map) { Copy-Item $map.FullName gpu-main-out/ -Force }
+
+      - name: Upload GPU Main package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Main-GPU-Phase3-Integrated-x86
+          path: gpu-main-out
+          retention-days: 30
