@@ -44,12 +44,7 @@ jobs:
           if(Test-Path MuGPU.dll) {
             (Get-FileHash MuGPU.dll -Algorithm SHA256).Hash | Set-Content mugpu-out/MuGPU_SHA256.txt
           }
-          @'
-Special Main v2
-- GPU eligible opaque meshes skip CPU VertexTransform/NormalTransform in BMD::Transform.
-- If a later render pass needs the legacy CPU arrays, that mesh is transformed lazily once and original rendering is used.
-- MuGPU.log reports GPU draws, fallbacks, skipped vertices/normals and lazy CPU transforms.
-'@ | Set-Content -Encoding UTF8 mugpu-out/V2-NOTES.txt
+          "Special Main v2 - GPU eligible opaque meshes skip CPU VertexTransform/NormalTransform; legacy fallback transforms a mesh lazily once; MuGPU.log reports skipped vertices/normals and lazy CPU count." | Set-Content -Encoding UTF8 mugpu-out/V2-NOTES.txt
 
       - name: Upload
         if: always()
