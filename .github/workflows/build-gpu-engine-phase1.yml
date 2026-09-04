@@ -22,6 +22,7 @@ jobs:
           python mu-gpu-engine-phase1/phase3/fix_phase3_shutdown.py
           Copy-Item mu-gpu-engine-phase1/special/SpecialMainBridge.cpp out/SpecialMainBridge.cpp -Force
           python mu-gpu-engine-phase1/special/patch_v2_lazy_cpu.py
+          python mu-gpu-engine-phase1/special/fix_v2_seh.py
 
       - name: Build MuGPU.dll Win32 x86
         shell: cmd
